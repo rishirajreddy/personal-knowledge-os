@@ -24,6 +24,10 @@ audio.mp3
 voices/*.onnx
 voices/*.onnx.json
 
+# Persistent memory
+data/
+*.db
+
 # OS
 .DS_Store
 Thumbs.db

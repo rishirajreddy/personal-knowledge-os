@@ -10,9 +10,25 @@ VOICE_SYSTEM_PROMPT = """You are a helpful, conversational voice assistant. Keep
 conversation_history: List[Dict[str, str]] = []
 
 
-def ask_llm_stream(prompt: str, use_history: bool = True) -> Iterator[str]:
+def ask_llm_stream(prompt: str, use_history: bool = True, retrieved_memories: List[str] = None,
+                   knowledge: List[str] = None,
+                   notes_only: bool = False) -> Iterator[str]:
     messages = []
-    messages.append({"role": "system", "content": VOICE_SYSTEM_PROMPT})
+    system_content = VOICE_SYSTEM_PROMPT
+    if retrieved_memories:
+        memory_text = "\n".join(f"- {m}" for m in retrieved_memories)
+        system_content += f"\n\nLong-term memories about the user:\n{memory_text}\nUse these facts when relevant."
+    if knowledge or notes_only:
+        snippets = "\n\n".join(knowledge) if knowledge else "(no matching excerpts found)"
+        if notes_only:
+            instruction = ("The user is asking about their own notes. Answer only from these excerpts and name "
+                           "the note you used. If they don't contain the answer, say you couldn't find it in the notes.")
+        else:
+            instruction = ("These excerpts were found by keyword search and may be unrelated to the question. "
+                           "Use them only if they clearly help; otherwise ignore them completely and answer "
+                           "normally from your own knowledge. Never mention the excerpts or notes unless you used them.")
+        system_content += f"\n\nExcerpts from the user's own notes:\n{snippets}\n{instruction}"
+    messages.append({"role": "system", "content": system_content})
     if use_history and conversation_history:
         messages.extend(conversation_history)
     messages.append({"role": "user", "content": prompt})
@@ -59,10 +75,10 @@ def ask_llm_stream(prompt: str, use_history: bool = True) -> Iterator[str]:
         yield error_msg
 
 
-def ask_llm(prompt: str):
+def ask_llm(prompt: str, retrieved_memories: List[str] = None):
     # Backward compatible non-streaming
     result = []
-    for chunk in ask_llm_stream(prompt):
+    for chunk in ask_llm_stream(prompt, retrieved_memories=retrieved_memories):
         result.append(chunk)
     return "".join(result)
 

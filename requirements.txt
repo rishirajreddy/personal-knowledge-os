@@ -5,3 +5,5 @@ scipy
 numpy
 requests
 piper-tts
+openwakeword
+onnxruntime

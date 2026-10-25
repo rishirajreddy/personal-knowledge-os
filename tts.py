@@ -64,6 +64,36 @@ def clean_text_for_speech(text: str) -> str:
     return text.strip()
 
 
+# Piper's ryan voice has a noticeable noise floor (~-37 dBFS) between words, which
+# peak normalisation makes audible. Gate it, and play a little below full scale
+# so small laptop speakers don't distort.
+GATE_DB = -30
+OUTPUT_GAIN = 0.7
+
+
+def _noise_gate(audio, sample_rate, thresh_db=GATE_DB, win_ms=20, floor=0.05):
+    """Attenuate quiet stretches (pauses between words) so background hiss isn't heard."""
+    w = int(sample_rate * win_ms / 1000)
+    x = np.pad(audio, (0, (-len(audio)) % w))
+    rms = np.sqrt(np.mean(x.reshape(-1, w) ** 2, axis=1))
+    gain = np.where(20 * np.log10(rms + 1e-9) < thresh_db, floor, 1.0)
+    gain = np.convolve(gain, np.ones(3) / 3, mode="same")          # don't cut word edges
+    g = np.convolve(np.repeat(gain, w), np.ones(w) / w, mode="same")  # smooth so the gate can't click
+    return (x * g)[:len(audio)].astype(np.float32)
+
+
+def _soften_edges(audio, sample_rate, fade_ms=10, pad_ms=60):
+    """Fade the first/last few ms and pad with silence so starting/stopping playback doesn't click."""
+    audio = audio.astype(np.float32).copy()
+    n = min(int(sample_rate * fade_ms / 1000), len(audio) // 2)
+    if n > 0:
+        ramp = np.linspace(0.0, 1.0, n, dtype=np.float32)
+        audio[:n] *= ramp
+        audio[-n:] *= ramp[::-1]
+    pad = np.zeros(int(sample_rate * pad_ms / 1000), dtype=np.float32)
+    return np.concatenate([pad, audio, pad])
+
+
 def speak_sentence(sentence: str) -> None:
     sentence = clean_text_for_speech(sentence)
     if not sentence:
@@ -108,10 +138,12 @@ def speak_sentence(sentence: str) -> None:
             audio = audio.astype(np.float32) / 32768.0
         elif audio.dtype == np.int32:
             audio = audio.astype(np.float32) / 2147483648.0
+        audio = _soften_edges(_noise_gate(audio, sample_rate) * OUTPUT_GAIN, sample_rate)
         sd.play(audio, samplerate=sample_rate)
         sd.wait()
     except Exception as e:
         # Fallback to macOS say
+        print(f"[Piper failed, falling back to macOS 'say': {e}]", flush=True)
         try:
             import subprocess
             subprocess.run(["say", sentence])
